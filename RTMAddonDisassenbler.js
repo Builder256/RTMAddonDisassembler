@@ -3,12 +3,13 @@ const path = require('path');
 
 const TARGET_DIR = './'
 const IGNORELIST = [
-    'package.json'
+    'package.json',
+    'sounds.json'
 ];
 
 const files = fs.readdirSync(TARGET_DIR, { recursive: true });
 
-let jsons = getFileByExtName(files, '.json');
+let jsons = getJsonFile(files);
 
 jsons = filterFiles(jsons, IGNORELIST);
 
@@ -19,17 +20,18 @@ for (const json of jsons) {
 
 for (const trainInfo of trainInfos) {
     // console.log(trainInfo)
-    editMatData(trainInfo)
+    editMatData(trainInfo);
 }
 
 // const modelFiles = getFileByExtName(files, '.mqo');
 
 // console.log(modelFiles)
 
-function getFileByExtName(files, ext) {
+function getJsonFile(files) {
     const result = [];
     for (const file of files) {
-        if (path.parse(file).ext === ext) result.push(file);
+        const parsed = path.parse(file)
+        if (parsed.ext === '.json' && parsed.name.startsWith('ModelTrain_')) result.push(file);
     }
     return result;
 }
@@ -44,7 +46,7 @@ function getTrainInfo(file) {
     if (json.trainModel2) {
         trainModel = json.trainModel2;
     } else {
-        console.warn(`Unsupportted JSON format: trainModel2 is not defined at ${path.parse(file).base}`);
+        console.error(`Unsupportted JSON format: trainModel2 is not defined at ${path.parse(file).base}`);
         process.exit(1);
     }
 
@@ -66,7 +68,7 @@ function getTrainInfo(file) {
 }
 
 function editMatData(trainInfo) {
-    console.log('editing mat data')
+    // console.log('editing mat data')
     // console.log(`editMatData was called: ${path.join(TARGET_DIR, 'assets/minecraft/models/', trainInfo.modelFile)}`)
     const content = fs.readFileSync(path.join(TARGET_DIR, 'assets/minecraft/models/', trainInfo.modelFile), { encoding: 'utf-8' })
 
@@ -75,9 +77,9 @@ function editMatData(trainInfo) {
 
     let readingMaterials = false;
 
-    for (let line of lines) {
+    for (const line of lines) {
 
-        if (line.startsWith('Material')) {
+        if (line.startsWith('Material ')) {
             readingMaterials = true;
             edited.push(line);
             continue;
@@ -91,15 +93,69 @@ function editMatData(trainInfo) {
 
         if (readingMaterials) {
             const data = parseMaterialData(line);
+            // console.log(data)
+            // console.log(trainInfo.textures[0])
+            // try {
+            const matName = data[0].replaceAll('"', '');
+            // } catch (error) {
+            //     console.error(error)
+            //     console.log(line);
+            //     console.log(trainInfo.modelFile);
 
+            //     process.exit(1);
+            // }
+
+            // console.log(matName)
+
+            const textures = trainInfo.textures;
+
+            for (const texture of textures) {
+                if (matName !== texture.mat) continue;
+
+                const texIndex = data.findIndex(e => e.startsWith('tex('));
+
+                const texPath = `tex("${getPathFromModelToTex(trainInfo.modelFile, texture.path)}")`;
+
+                if (texIndex === -1) { // JavaScriptでは、配列の負の添字に代入してもエラーを起こさない なぜならば、全てオブジェクトだから。
+                    data.push(texPath);
+                } else {
+                    data[texIndex] = texPath;
+                }
+
+                // console.log(texture.path, trainInfo.modelFile);
+                // console.log(getPathFromModelToTex(trainInfo.modelFile, texture.path))
+
+
+
+                const newData = `\t${data.join(' ')}`;
+                edited.push(newData);
+            }
+            continue;
         }
+
+        edited.push(line);
     }
+
+    const result = edited.join('\r\n');
+    const editedModelFile = path.join(path.dirname(trainInfo.modelFile), `[DISASSEMBLED]${path.basename(trainInfo.modelFile)}`);
+
+    fs.writeFileSync(path.join(TARGET_DIR, 'assets/minecraft/models/', editedModelFile), result);
+    console.log(`Generated disassembled MQO File: ${path.join('assets/minecraft/models/', editedModelFile)}\n`);
 
 }
 
 function parseMaterialData(mat) {
     const regex = /"[^"]*"|\w+\([^)]*\)|\w+/g;
     return mat.match(regex) || [];
+}
+
+function getPathFromModelToTex(modelPath, texPath) {
+
+    const baseDir = path.resolve('./assets/minecraft/models');
+    const fileModelPath = path.join(baseDir, modelPath);
+    const filetexPath = path.join(baseDir, '..', texPath);
+
+    return path.relative(path.dirname(fileModelPath), filetexPath);
 }
 
 /**
